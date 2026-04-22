@@ -1,0 +1,31 @@
+rules:
+  - id: R001
+    name: missing_expiration_date
+    severity: High
+  - id: R002
+    name: missing_contract_value
+    severity: Medium
+  - id: R003
+    name: missing_supplier
+    severity: High
+  - id: R004
+    name: expired_contract
+    severity: High
+  - id: R005
+    name: expiring_within_90_days
+    severity: Medium
+  - id: R006
+    name: auto_renewal_present
+    severity: Medium
+  - id: R007
+    name: liability_cap_missing
+    severity: High
+  - id: R008
+    name: business_entity_missing
+    severity: Medium
+  - id: R009
+    name: governing_law_missing
+    severity: Low
+  - id: R010
+    name: low_confidence_extraction
+    severity: Low

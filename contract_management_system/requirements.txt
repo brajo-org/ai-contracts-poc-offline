@@ -1,0 +1,4 @@
+streamlit>=1.35
+pydantic>=2.7
+python-docx>=1.1
+PyYAML>=6.0
