@@ -74,17 +74,16 @@ Your browser will open automatically to `http://localhost:8501`. If it doesn't, 
 ### Homepage
 
 **What you see:**
-- Title: "Contract Intelligence POC"
-- Navigation table showing the 3 pages and their purpose
-- Blue info banner: "Select a page from the sidebar to begin."
+- The app auto-redirects to **Risk Identification**
+- No manual landing-page navigation is required
 
 **What to do:**
 - Point out the sidebar on the left — Streamlit automatically generates page links from the `pages/` directory
-- Click **"1 Contract Changes"** in the sidebar to begin
+- Start directly on **"1 Risk Identification"**
 
 ---
 
-### Page 1 — Contract Changes
+### Page 1 — Risk Identification
 
 **Purpose:** Triage all risk signals across the selected run. Quickly identify the most critical issues and filter down.
 
@@ -97,28 +96,28 @@ Your browser will open automatically to `http://localhost:8501`. If it doesn't, 
 
 **2. Stoplight KPI Row**
 - Four colored cards display across the top:
-  - **Total Changes** — total risk signals for this run (slate/dark card)
+  - **Total Flags** — total risk signals for the selected contract scope
   - **Critical** — count of High severity signals (red card)
   - **Medium** — count of Medium severity signals (amber card)
   - **Low** — count of Low severity signals (green card)
-- Each card has a filter button beneath it
+- Each KPI card is directly clickable (no separate filter buttons).
 
 **3. Filter by Severity (Stoplight Interaction)**
-- Click **"Filter Critical"** under the red card
-  - The table below immediately filters to show only High severity signals
-  - The caption updates: "Showing X of Y signals"
-- Click **"Filter Medium"** — table switches to Medium signals only
-- Click **"Show All"** — all signals return
+- Click the **Critical** KPI card to filter to High severity signals
+  - The explanation list below filters immediately
+  - The caption updates with the filtered count
+- Click the **Medium** KPI card to switch filters
+- Click the **Total Flags** KPI card to clear severity filtering
 - _This is the main interactive feature — highlight the speed of triage_
 
 **4. Filter by Contract**
-- Use the **"Filter by Contract"** dropdown (next to the severity label) to narrow to a specific document
-- Combine: select "Filter Critical" + select a specific contract to see only that contract's critical issues
+- Use the **Contract** dropdown in the sidebar to narrow to a specific document
+- KPI counts recalculate from the selected contract before severity filtering is applied
 
-**5. Changes Table**
-- Columns: Contract, Rule, Severity, Field, Issue, Evidence
-- Default sort: Critical first, then Medium, then Low
-- Note: Currently all contracts show similar signals — this is a known phase-1 data quality issue (PDF extraction). The UI structure is correct.
+**5. Explanation Panels**
+- Each signal is rendered as an expander row
+- Expanded layout shows: Triggering Rule, Evidence Text, and Severity Rationale
+- This gives reviewers a concise explainability panel per flag.
 
 **Key talking points:**
 - Reviewers can get to the highest-risk items in one click
@@ -127,7 +126,7 @@ Your browser will open automatically to `http://localhost:8501`. If it doesn't, 
 
 ---
 
-### Page 2 — Risk Assessment
+### Page 2 — Executive Summary
 
 **Purpose:** Executive view of the run — summary statistics, severity distribution, and per-contract risk breakdown.
 
@@ -137,24 +136,15 @@ Your browser will open automatically to `http://localhost:8501`. If it doesn't, 
 - Same sidebar dropdown as Page 1 — selecting a run updates all sections
 
 **2. Executive Summary Metrics**
-- Five metric cards at the top:
-  - Documents Processed
-  - Total Risk Signals
-  - Critical (High) count
-  - Medium count
-  - Low count
-- Below the metrics: average extraction confidence percentage
-- Click the **"Full Run Summary"** expander to see the raw `run_summary.md` content
+- Run metadata bar appears at top with run ID, parsed start time, and document count
+- "All contracts" view shows Docs Processed, Total Signals, Critical Count, and Medium Count cards
 
 **3. Severity Distribution Chart**
-- A bar chart showing High / Medium / Low signal counts
-- Gives a quick visual sense of the risk distribution across the run
+- Plotly pie chart shows High / Medium / Low distribution (aggregate or selected contract)
 
 **4. Risk Breakdown by Contract**
-- Each contract gets its own expandable section
-- Sorted by High count descending (most critical contracts at top)
-- Each expander header shows: `Contract Name — 🔴 X Critical  🟡 Y Medium  🟢 Z Low`
-- Click any expander to see that contract's rule-level breakdown (Rule, Severity, Field, Issue)
+- All-contract view includes a per-contract severity summary table
+- Single-contract view shows overall risk badge, top high-severity items, and full signal table
 
 **Demo flow suggestion:**
 1. Point to the metrics row — "This is what a legal ops manager sees first"
@@ -320,8 +310,8 @@ streamlit run app/ui/streamlit_app.py --server.port 8502
 |---|---|
 | Pipeline entry point | `app/main.py` |
 | Streamlit homepage | `app/ui/streamlit_app.py` |
-| Contract Changes page | `app/ui/pages/1_Contract_Changes.py` |
-| Risk Assessment page | `app/ui/pages/2_Risk_Assessment.py` |
+| Risk Identification page | `app/ui/pages/1_Risk_Identification.py` |
+| Executive Summary page | `app/ui/pages/2_Executive_Summary.py` |
 | Redlining page | `app/ui/pages/3_Redlining.py` |
 | Shared data loader | `app/ui/components/data_loader.py` |
 | Run outputs | `outputs/runs/RUN_*/` |
