@@ -60,3 +60,10 @@ Each run writes to `outputs/runs/RUN_YYYYMMDD_HHMMSS/`:
 - Parser quality is intentionally minimal in this scaffold.
 - Redline DOCX is a stable fallback export (pseudo-redline content).
 - Eval pack is starter-level and not yet full 25-document coverage.
+
+
+## UI pages
+- **Risk Identification** (`app/ui/pages/1_Risk_Identification.py`): clickable KPI stoplight cards, contract-first filtering, and expandable explanation panels per signal.
+- **Executive Summary** (`app/ui/pages/2_Executive_Summary.py`): run metadata strip, aggregate/single-contract views, and severity pie charts.
+- **Redlining** (`app/ui/pages/3_Redlining.py`): full-document redline canvas, review workflow, and Excel/Word/PDF exports with Coupa placeholder button.
+- **Clause Library** (`app/ui/pages/4_Clause_Library.py`): phase-1 placeholder page for searchable clause library.

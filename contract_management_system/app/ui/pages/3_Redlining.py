@@ -1,40 +1,46 @@
 from __future__ import annotations
 
-import json
+import io
+import re
 import sys
 from pathlib import Path
 
+import pandas as pd
 import streamlit as st
+from docx import Document
+from reportlab.lib.pagesizes import letter
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 
 sys.path.insert(0, str(Path(__file__).parents[3]))
 from app.ui.components.data_loader import (
     get_all_runs,
     get_doc_label_map,
+    load_contract_text,
     load_redlines,
     load_risk_signals,
 )
 
 st.set_page_config(page_title="Redlining", layout="wide")
 
-st.markdown("""
+st.markdown(
+    """
 <style>
-.redline-card {
-    background: #1E293B;
-    border-radius: 8px;
-    padding: 16px;
-    margin-bottom: 12px;
-    border-left: 4px solid #1E40AF;
-}
-.status-Accepted { color: #4ADE80; font-weight: 700; }
-.status-Rejected { color: #F87171; font-weight: 700; }
-.status-Edited   { color: #FBBF24; font-weight: 700; }
-.status-Pending  { color: #94A3B8; font-weight: 600; }
+@import url('https://fonts.googleapis.com/css2?family=Nunito+Sans:wght@400;600;700&family=Varela+Round&display=swap');
+html, body, [class*="css"]  { font-family: 'Nunito Sans', sans-serif; }
+h1, h2, h3 { font-family: 'Varela Round', sans-serif; }
+.card{background:#FFFFFF;border-radius:10px;box-shadow:0 2px 8px rgba(99,102,241,0.08);padding:16px;}
+.badge{padding:2px 10px;border-radius:999px;font-size:12px;font-weight:700;border:1px solid transparent;display:inline-block;}
+.badge-High{background:#FEF2F2;color:#DC2626;border-color:#FECACA;}
+.badge-Medium{background:#FFFBEB;color:#D97706;border-color:#FDE68A;}
+.badge-Low{background:#F0FDF4;color:#16A34A;border-color:#BBF7D0;}
 </style>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
 st.title("Redlining")
 
-# --- Sidebar: run + contract selectors ---
 runs = get_all_runs()
 if not runs:
     st.error("No runs found. Run the pipeline first.")
@@ -44,171 +50,213 @@ selected_run = st.sidebar.selectbox("Run", runs, format_func=lambda p: p.name)
 run_key = str(selected_run)
 
 doc_label_map = get_doc_label_map(run_key)
-label_to_doc  = {v: k for k, v in doc_label_map.items()}
+label_to_doc = {v: k for k, v in doc_label_map.items()}
 
 redlines_df = load_redlines(run_key)
-risk_df     = load_risk_signals(run_key)
+risk_df = load_risk_signals(run_key)
 
-# Enrich redlines with severity from risk signals
 if not redlines_df.empty and not risk_df.empty:
     sev_map = risk_df.set_index("rule_id")["severity"].to_dict()
-    redlines_df["severity"] = redlines_df["risk_id"].map(sev_map).fillna("Unknown")
+    redlines_df["severity"] = redlines_df["risk_id"].map(sev_map).fillna("Low")
 
 all_labels = list(doc_label_map.values()) if doc_label_map else []
 if not all_labels:
     all_labels = redlines_df["document_id"].unique().tolist() if not redlines_df.empty else []
 
-selected_label = st.sidebar.selectbox("Contract", sorted(all_labels))
-selected_doc   = label_to_doc.get(selected_label, selected_label)
+if not all_labels:
+    st.info("No contracts are available for redlining.")
+    st.stop()
 
-# --- Main area ---
-st.markdown(f"### {selected_label}")
-st.caption(f"Document ID: `{selected_doc}`")
+selected_label = st.sidebar.selectbox("Contract", sorted(all_labels))
+selected_doc = label_to_doc.get(selected_label, selected_label)
 
 doc_redlines = redlines_df[redlines_df["document_id"] == selected_doc] if not redlines_df.empty else redlines_df
+st.markdown(f"### {selected_label}")
+
+contract_text = load_contract_text(run_key, selected_doc)
+
+if not doc_redlines.empty:
+    doc_redlines = doc_redlines.reset_index(drop=True)
+
+if contract_text:
+    processed = contract_text
+    additions = []
+    for idx, row in doc_redlines.iterrows():
+        orig = str(row.get("original_text") or "")
+        prop = str(row.get("proposed_text") or "")
+        if orig.strip() and orig in processed:
+            repl = (
+                f"<del style='background:#FEE2E2;text-decoration:line-through;color:#991B1B'>{orig}</del>"
+                f"<ins style='background:#DCFCE7;text-decoration:underline;color:#166534'>{prop}</ins>"
+            )
+            processed = processed.replace(orig, repl, 1)
+        elif not orig.strip() and prop.strip():
+            marker = f"<sup style='color:#16A34A'>[+{idx+1}]</sup>"
+            processed += marker
+            additions.append((idx + 1, prop))
+
+    st.markdown(
+        f"""
+        <div style="background:#fff;border-radius:10px;padding:24px 32px;
+                    box-shadow:0 2px 8px rgba(99,102,241,0.08);
+                    max-height:600px;overflow-y:auto;font-family:'Nunito Sans';
+                    line-height:1.7;white-space:pre-wrap;">{processed}</div>
+        """,
+        unsafe_allow_html=True,
+    )
+    if additions:
+        st.markdown("**Additions**")
+        for num, txt in additions:
+            st.markdown(f"- `[+{num}]` {txt}")
+else:
+    st.info("Contract text unavailable. Showing fallback card-per-change view.")
+    for _, row in doc_redlines.iterrows():
+        sev = row.get("severity", "Low")
+        st.markdown(f"<div class='card'><b>{row.get('risk_id')}</b> <span class='badge badge-{sev}'>{sev}</span><br><del>{row.get('original_text','')}</del><br><ins>{row.get('proposed_text','')}</ins></div>", unsafe_allow_html=True)
 
 st.divider()
-
-# --- Section A: AI Suggested Changes ---
-st.subheader("AI Suggested Changes")
+st.subheader("Review Changes")
 
 if doc_redlines.empty:
     st.info("No AI-suggested redlines for this contract.")
-else:
-    for i, row in doc_redlines.reset_index(drop=True).iterrows():
-        decision_key    = f"rl_decision_{selected_doc}_{row['risk_id']}"
-        edited_text_key = f"rl_edited_{selected_doc}_{row['risk_id']}"
-        current_status  = st.session_state.get(decision_key, "Pending")
 
-        sev = row.get("severity", "Unknown")
-        sev_colors = {"High": "#DC2626", "Medium": "#D97706", "Low": "#16A34A"}
-        sev_color  = sev_colors.get(sev, "#94A3B8")
-
-        st.markdown(
-            f"**{row['risk_id']}** &nbsp;|&nbsp; "
-            f"<span style='color:{sev_color};font-weight:700'>{sev}</span> &nbsp;|&nbsp; "
-            f"`{row.get('change_type', 'replace').upper()}`",
-            unsafe_allow_html=True,
-        )
-
-        col_orig, col_prop = st.columns(2)
-        with col_orig:
-            st.markdown("**Original Text**")
-            orig = row.get("original_text") or ""
-            st.code(orig if orig.strip() else "(no original text — addition required)", language=None)
-        with col_prop:
-            st.markdown("**AI Proposed Change**")
-            st.code(row.get("proposed_text", ""), language=None)
-
-        st.caption(
-            f"Rationale: {row.get('rationale', '')} &nbsp;|&nbsp; "
-            f"Confidence: {row.get('confidence', 0):.0%}"
-        )
-
-        btn_col1, btn_col2, status_col = st.columns([1, 1, 5])
-        with btn_col1:
-            if st.button("✓ Accept", key=f"accept_{selected_doc}_{i}"):
+with st.expander("Review Changes", expanded=not doc_redlines.empty):
+    for i, row in doc_redlines.iterrows():
+        risk_id = row.get("risk_id", f"risk_{i}")
+        decision_key = f"rl_decision_{selected_doc}_{risk_id}"
+        edited_text_key = f"rl_edited_{selected_doc}_{risk_id}"
+        sev = row.get("severity", "Low")
+        cur = st.session_state.get(decision_key, "Pending")
+        c1, c2, c3, c4 = st.columns([2, 2, 6, 4])
+        c1.markdown(f"`{risk_id}`")
+        c2.markdown(f"<span class='badge badge-{sev}'>{sev}</span>", unsafe_allow_html=True)
+        c3.write(row.get("proposed_text", ""))
+        with c4:
+            b1, b2 = st.columns(2)
+            if b1.button("Accept", key=f"accept_{selected_doc}_{i}"):
                 st.session_state[decision_key] = "Accepted"
-                st.session_state.pop(edited_text_key, None)
-                st.rerun()
-        with btn_col2:
-            if st.button("✗ Reject", key=f"reject_{selected_doc}_{i}"):
+            if b2.button("Reject", key=f"reject_{selected_doc}_{i}"):
                 st.session_state[decision_key] = "Rejected"
-                st.session_state.pop(edited_text_key, None)
-                st.rerun()
-        with status_col:
-            status_color = {"Accepted": "#4ADE80", "Rejected": "#F87171",
-                            "Edited": "#FBBF24", "Pending": "#94A3B8"}.get(current_status, "#94A3B8")
-            st.markdown(
-                f"Status: <span style='color:{status_color};font-weight:700'>{current_status}</span>",
-                unsafe_allow_html=True,
-            )
-
-        if current_status not in ("Accepted", "Rejected"):
-            edited = st.text_area(
-                "Edit proposed text (optional)",
-                value=st.session_state.get(edited_text_key, row.get("proposed_text", "")),
-                key=f"edit_area_{selected_doc}_{i}",
-                height=80,
-            )
+            edited = st.text_input("Edit", value=st.session_state.get(edited_text_key, row.get("proposed_text", "")), key=f"edit_{selected_doc}_{i}")
             if edited != row.get("proposed_text", ""):
-                st.session_state[decision_key]    = "Edited"
+                st.session_state[decision_key] = "Edited"
                 st.session_state[edited_text_key] = edited
-
-        st.divider()
-
-# --- Section B: Custom Changes ---
-st.subheader("Add Custom Change")
-
-custom_key = f"rl_custom_{selected_doc}"
-if custom_key not in st.session_state:
-    st.session_state[custom_key] = []
-
-with st.form(key=f"custom_form_{selected_doc}", clear_on_submit=True):
-    clause_ref  = st.text_input("Clause / Section Reference (e.g. Section 4.2)")
-    custom_text = st.text_area("Proposed Change Text", height=100)
-    submitted   = st.form_submit_button("Add Change")
-    if submitted and custom_text.strip():
-        st.session_state[custom_key].append({
-            "clause_ref": clause_ref,
-            "proposed_text": custom_text,
-            "source": "user",
-        })
-        st.success("Custom change added.")
-
-if st.session_state[custom_key]:
-    st.markdown("**Custom Changes Added:**")
-    for idx, c in enumerate(st.session_state[custom_key]):
-        col_c, col_del = st.columns([10, 1])
-        with col_c:
-            ref = f"[{c['clause_ref']}] " if c['clause_ref'] else ""
-            st.markdown(f"- {ref}{c['proposed_text']}")
-        with col_del:
-            if st.button("✕", key=f"del_custom_{selected_doc}_{idx}"):
-                st.session_state[custom_key].pop(idx)
-                st.rerun()
-
-st.divider()
-
-# --- Section C: Export Decisions ---
-st.subheader("Export Decisions")
+            st.caption(f"Status: {st.session_state.get(decision_key, cur)}")
 
 def collect_decisions() -> list[dict]:
     out = []
-    if doc_redlines.empty:
-        return out
-    for _, row in doc_redlines.reset_index(drop=True).iterrows():
-        decision_key    = f"rl_decision_{selected_doc}_{row['risk_id']}"
-        edited_text_key = f"rl_edited_{selected_doc}_{row['risk_id']}"
+    for _, row in doc_redlines.iterrows():
+        risk_id = row.get("risk_id")
+        decision_key = f"rl_decision_{selected_doc}_{risk_id}"
+        edited_text_key = f"rl_edited_{selected_doc}_{risk_id}"
         decision = st.session_state.get(decision_key, "Pending")
-        if decision == "Accepted":
-            final_text = row.get("proposed_text", "")
-        elif decision == "Edited":
-            final_text = st.session_state.get(edited_text_key, row.get("proposed_text", ""))
-        else:
+        final_text = row.get("proposed_text", "")
+        if decision == "Edited":
+            final_text = st.session_state.get(edited_text_key, final_text)
+        elif decision == "Rejected":
             final_text = None
-        out.append({
-            "document_id": selected_doc,
-            "risk_id":     row["risk_id"],
-            "decision":    decision,
-            "final_text":  final_text,
-            "source":      "ai",
-        })
-    for c in st.session_state.get(custom_key, []):
-        out.append({
-            "document_id":  selected_doc,
-            "clause_ref":   c["clause_ref"],
-            "final_text":   c["proposed_text"],
-            "decision":     "Accepted",
-            "source":       "user",
-        })
+        out.append(
+            {
+                "Contract": selected_label,
+                "Risk ID": risk_id,
+                "Severity": row.get("severity", "Low"),
+                "Original": row.get("original_text", ""),
+                "Proposed": row.get("proposed_text", ""),
+                "Decision": decision,
+                "Final": final_text,
+            }
+        )
+    for c in st.session_state.get(f"rl_custom_{selected_doc}", []):
+        out.append(
+            {
+                "Contract": selected_label,
+                "Risk ID": "CUSTOM",
+                "Severity": "N/A",
+                "Original": "",
+                "Proposed": c["proposed_text"],
+                "Decision": "Accepted",
+                "Final": c["proposed_text"],
+                "Clause Ref": c.get("clause_ref", ""),
+            }
+        )
     return out
 
-decisions = collect_decisions()
-st.download_button(
-    label="Download decisions.json",
-    data=json.dumps(decisions, indent=2),
-    file_name=f"decisions_{selected_doc}.json",
-    mime="application/json",
-    disabled=not decisions,
-)
+st.subheader("Add Custom Change")
+custom_key = f"rl_custom_{selected_doc}"
+if custom_key not in st.session_state:
+    st.session_state[custom_key] = []
+with st.form(key=f"custom_form_{selected_doc}", clear_on_submit=True):
+    clause_ref = st.text_input("Clause / Section Reference")
+    custom_text = st.text_area("Proposed Change Text", height=90)
+    submitted = st.form_submit_button("Add Change")
+    if submitted and custom_text.strip():
+        st.session_state[custom_key].append({"clause_ref": clause_ref, "proposed_text": custom_text})
+
+rows = collect_decisions()
+
+excel_buffer = io.BytesIO()
+with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
+    pd.DataFrame(rows)[["Contract", "Risk ID", "Severity", "Original", "Proposed", "Decision"]].to_excel(
+        writer, sheet_name="Redlines", index=False
+    )
+    custom_rows = [{"Clause Ref": c.get("clause_ref", ""), "Proposed Text": c.get("proposed_text", "")} for c in st.session_state.get(custom_key, [])]
+    pd.DataFrame(custom_rows).to_excel(writer, sheet_name="Custom Changes", index=False)
+excel_buffer.seek(0)
+
+doc_buffer = io.BytesIO()
+doc = Document()
+doc.add_heading(selected_label, level=1)
+for r in rows:
+    doc.add_heading(f"{r['Risk ID']} ({r['Severity']})", level=2)
+    p = doc.add_paragraph()
+    run1 = p.add_run(str(r.get("Original", "")))
+    run1.font.strike = True
+    p.add_run(" → ")
+    run2 = p.add_run(str(r.get("Final") or r.get("Proposed", "")))
+    run2.font.underline = True
+    doc.add_paragraph(f"Decision: {r['Decision']}")
+doc.save(doc_buffer)
+doc_buffer.seek(0)
+
+pdf_buffer = io.BytesIO()
+pdf_doc = SimpleDocTemplate(pdf_buffer, pagesize=letter)
+styles = getSampleStyleSheet()
+story = [Paragraph(f"<b>{selected_label}</b>", styles["BodyText"]), Spacer(1, 10)]
+for r in rows:
+    story.append(Paragraph(f"<b>{r['Risk ID']} ({r['Severity']})</b>", styles["BodyText"]))
+    orig = re.sub(r"[<>&]", "", str(r.get("Original", "")))
+    fin = re.sub(r"[<>&]", "", str(r.get("Final") or r.get("Proposed", "")))
+    story.append(Paragraph(f"<strike>{orig}</strike> <u>{fin}</u>", styles["BodyText"]))
+    story.append(Paragraph(f"Decision: {r['Decision']}", styles["BodyText"]))
+    story.append(Spacer(1, 8))
+pdf_doc.build(story)
+pdf_buffer.seek(0)
+
+st.subheader("Export")
+ex1, ex2, ex3, ex4 = st.columns(4)
+with ex1:
+    st.download_button(
+        "Download Excel",
+        data=excel_buffer,
+        file_name=f"redlines_{selected_doc}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        disabled=not rows,
+    )
+with ex2:
+    st.download_button(
+        "Download Word",
+        data=doc_buffer,
+        file_name=f"redlines_{selected_doc}.docx",
+        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        disabled=not rows,
+    )
+with ex3:
+    st.download_button(
+        "Download PDF",
+        data=pdf_buffer,
+        file_name=f"redlines_{selected_doc}.pdf",
+        mime="application/pdf",
+        disabled=not rows,
+    )
+with ex4:
+    st.button("Send to Coupa", disabled=True, help="Integration coming in Phase 2")

@@ -77,3 +77,31 @@ def get_doc_label_map(run_dir: str) -> dict[str, str]:
     if "source_filename" in manifest.columns:
         return dict(zip(manifest["document_id"], manifest["source_filename"]))
     return {d: d for d in manifest["document_id"]}
+
+
+@st.cache_data
+def load_contract_text(run_dir: str, document_id: str) -> str:
+    manifest = load_intake_manifest(run_dir)
+    if manifest.empty:
+        return ""
+    row = manifest[manifest["document_id"] == document_id]
+    if row.empty or "source_path" not in row.columns:
+        return ""
+    source_path = Path(row.iloc[0]["source_path"])
+    if not source_path.is_absolute():
+        source_path = Path(run_dir).parents[1] / source_path
+    if not source_path.exists():
+        return ""
+    suffix = source_path.suffix.lower()
+    if suffix == ".pdf":
+        import pdfplumber
+
+        with pdfplumber.open(source_path) as pdf:
+            return "\n\n".join(page.extract_text() or "" for page in pdf.pages)
+    if suffix == ".docx":
+        from docx import Document
+
+        return "\n".join(p.text for p in Document(source_path).paragraphs)
+    if suffix in {".txt", ".md"}:
+        return source_path.read_text(encoding="utf-8", errors="ignore")
+    return ""
